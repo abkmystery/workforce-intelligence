@@ -1,0 +1,63 @@
+import {beforeAll,describe,it,expect,afterAll} from 'vitest';
+import {randomUUID} from 'node:crypto';
+import {transaction,closeDatabase} from '../../src/lib/db';
+import {mutateRecord,getRecord,listRecords} from '../../src/lib/records';
+import {performAction} from '../../src/lib/workflows';
+import {domains} from '../../src/lib/registry';
+import type {Actor,RecordRow} from '../../src/lib/types';
+const tenantId=randomUUID();
+const actors:Actor[]=Array.from({length:5},()=>({tenantId,userId:randomUUID(),sessionId:'test',roles:[],authVersion:1,grants:Object.values(domains).map(d=>({domain:d.key,operation:'*',dataClass:d.dataClass,orgId:null,scope:'tenant' as const,validFrom:'2000-01-01',validTo:null}))}));
+const owner=actors[0];
+describe.skipIf(!process.env.TEST_DATABASE_URL)('AC13/15/16 approved workflows on PostgreSQL',()=>{
+ let sourceOrg:string,destinationOrg:string,roleId:string,workerId:string,assignment:RecordRow;
+ beforeAll(async()=>{process.env.DATABASE_URL=process.env.TEST_DATABASE_URL;await transaction(tenantId,async tx=>{await tx.query('INSERT INTO tenants(id,name,settings) VALUES($1,$2,$3)',[tenantId,'SYNTHETIC workflow tests',{synthetic:true}]);for(const a of actors)await tx.query('INSERT INTO principals(id,tenant_id,entra_object_id) VALUES($1,$2,$3)',[a.userId,tenantId,randomUUID()]);});
+  sourceOrg=(await mutateRecord(owner,'org-units',{operation:'CREATE',validFrom:'2026-01-01',data:{code:'SRC',name:'Synthetic source',orgType:'Team'}})).id;
+  destinationOrg=(await mutateRecord(owner,'org-units',{operation:'CREATE',validFrom:'2026-01-01',data:{code:'DST',name:'Synthetic destination',orgType:'Team'}})).id;
+  roleId=(await mutateRecord(owner,'roles',{operation:'CREATE',validFrom:'2026-01-01',data:{name:'Data analyst'}})).id;
+  workerId=(await mutateRecord(owner,'workers',{operation:'CREATE',orgId:sourceOrg,validFrom:'2026-01-01',data:{code:'SYN-1',workerType:'manual-only',employmentStatus:'active',homeOrgId:sourceOrg}})).id;
+  const calendar=(await mutateRecord(owner,'calendars',{operation:'CREATE',validFrom:'2026-01-01',data:{name:'Standard',weekdays:'1,2,3,4,5',hoursPerDay:8}})).id;
+  await mutateRecord(owner,'contracts',{operation:'CREATE',orgId:sourceOrg,workerId,validFrom:'2026-01-01',data:{fte:1,weeklyHours:40,calendarId:calendar,movable:true,confirmedOn:'2026-08-01'}});
+  assignment=await mutateRecord(owner,'assignments',{operation:'CREATE',orgId:sourceOrg,workerId,validFrom:'2026-01-01',data:{roleId,fte:1,allocationStatus:'committed',kind:'primary'}});
+ });
+ afterAll(closeDatabase);
+ it('does not silently execute a permanent transfer using temporary loan semantics',async()=>{
+  await expect(transaction(tenantId,async tx=>{
+   const demand=await mutateRecord(owner,'demands',{operation:'CREATE',orgId:destinationOrg,validFrom:'2026-09-01',data:{code:'D-PERMANENT',roleId,requestType:'transfer',fte:1,priority:'normal',businessCase:'Synthetic permanent placement',fundingStatus:'funded'}},tx);
+   const proposal=await mutateRecord(owner,'movements',{operation:'CREATE',orgId:destinationOrg,workerId,validFrom:'2026-09-01',data:{demandId:demand.id,sourceOrgId:sourceOrg,destinationOrgId:destinationOrg,sourceAssignmentId:assignment.id,sourceVersion:assignment.version,destinationVersion:demand.version,roleId,fte:1,kind:'transfer',businessCase:'Synthetic transfer'}},tx);
+   await tx.query("UPDATE movements SET state='approved' WHERE tenant_id=$1 AND id=$2",[tenantId,proposal.id]);
+   return proposal;
+  }).then(proposal=>performAction(owner,{action:'commit',domain:'movements',id:proposal.id,version:proposal.version}))).rejects.toMatchObject({code:'TRANSFER_DETAILS_REQUIRED'});
+  expect((await getRecord(owner,'assignments',assignment.id)).version).toBe(1);
+ });
+ it('loan atomically reduces source, adds destination and leaves 1.5 open FTE',async()=>{
+  let demand=await mutateRecord(owner,'demands',{operation:'CREATE',orgId:destinationOrg,validFrom:'2026-09-01',validTo:'2026-10-01',data:{code:'D-1',roleId,requestType:'loan',fte:2,priority:'normal',businessCase:'Synthetic approved analyst capacity',fundingStatus:'funded',requesterId:owner.userId}});
+  demand=await performAction(owner,{action:'submit',domain:'demands',id:demand.id,version:demand.version}) as RecordRow;
+  await expect(performAction(owner,{action:'approve',domain:'demands',id:demand.id,version:demand.version,stage:'manager'})).rejects.toMatchObject({code:'SELF_APPROVAL_FORBIDDEN'});
+  await performAction(actors[1],{action:'approve',domain:'demands',id:demand.id,version:demand.version,stage:'manager'});
+  demand=await performAction(actors[2],{action:'approve',domain:'demands',id:demand.id,version:demand.version,stage:'HR'}) as RecordRow;
+  let proposal=await mutateRecord(owner,'movements',{operation:'CREATE',orgId:destinationOrg,workerId,validFrom:'2026-09-01',validTo:'2026-10-01',data:{demandId:demand.id,sourceOrgId:sourceOrg,destinationOrgId:destinationOrg,sourceAssignmentId:assignment.id,sourceVersion:assignment.version,destinationVersion:demand.version,roleId,fte:0.5,kind:'loan',businessCase:'Synthetic temporary sharing'}});
+  proposal=await performAction(owner,{action:'submit',domain:'movements',id:proposal.id,version:proposal.version}) as RecordRow;
+  for(const [i,stage]of ['source-manager','destination-manager','HR','Finance'].entries())proposal=await performAction(actors[i+1],{action:'approve',domain:'movements',id:proposal.id,version:proposal.version,stage}) as RecordRow;
+  const result=await performAction(owner,{action:'commit',domain:'movements',id:proposal.id,version:proposal.version}) as {record:RecordRow;impact:Record<string,string>};
+  expect(result.impact.enterprisePayrollSavings).toBe('0.00');
+  const allocations=(await listRecords(owner,'assignments',{date:'2026-09-15'})).rows;
+  expect(allocations.filter(a=>a.orgId===sourceOrg).reduce((s,a)=>s+Number(a.data.fte),0)).toBe(0.5);
+  expect(allocations.filter(a=>a.orgId===destinationOrg).reduce((s,a)=>s+Number(a.data.fte),0)).toBe(0.5);
+  const filled=(await listRecords(owner,'fulfillments',{date:'2026-09-15'})).rows;expect(2-filled.reduce((s,f)=>s+Number(f.data.fte),0)).toBe(1.5);
+  expect((await getRecord(owner,'demands',demand.id)).state).toBe('partially-filled');
+  await expect(performAction(owner,{action:'commit',domain:'movements',id:proposal.id,version:result.record.version})).rejects.toMatchObject({code:'APPROVAL_REQUIRED'});
+ });
+ it('scenario fork stays isolated and stale target prevents approved commit',async()=>{
+  const target=await mutateRecord(owner,'assignments',{operation:'CREATE',orgId:destinationOrg,workerId,validFrom:'2026-11-01',data:{roleId,fte:0.2,allocationStatus:'planned',kind:'project',project:'Baseline'}});
+  let scenario=await mutateRecord(owner,'scenarios',{operation:'CREATE',orgId:destinationOrg,validFrom:'2026-11-01',data:{name:'Synthetic option',baselineDate:'2026-11-01',scenarioVersion:1}});
+  await mutateRecord(owner,'scenario-deltas',{operation:'CREATE',orgId:destinationOrg,workerId,validFrom:'2026-11-01',data:{scenarioId:scenario.id,domain:'assignments',targetId:target.id,targetVersion:target.version,operation:'UPDATE',payload:JSON.stringify({data:{project:'Proposed'}})}});
+  const fork=await performAction(owner,{action:'fork',domain:'scenarios',id:scenario.id,version:scenario.version}) as RecordRow;expect(fork.id).not.toBe(scenario.id);
+  expect((await getRecord(owner,'assignments',target.id)).data.project).toBe('Baseline');
+  scenario=await performAction(owner,{action:'submit',domain:'scenarios',id:scenario.id,version:scenario.version}) as RecordRow;
+  await performAction(actors[1],{action:'approve',domain:'scenarios',id:scenario.id,version:scenario.version,stage:'HR'});
+  scenario=await performAction(actors[2],{action:'approve',domain:'scenarios',id:scenario.id,version:scenario.version,stage:'Finance'}) as RecordRow;
+  await mutateRecord(owner,'assignments',{operation:'UPDATE',id:target.id,version:target.version,data:{project:'Live change'}});
+  await expect(performAction(owner,{action:'commit',domain:'scenarios',id:scenario.id,version:scenario.version})).rejects.toMatchObject({code:'STALE_SCENARIO_BASELINE'});
+  expect((await getRecord(owner,'assignments',target.id)).data.project).toBe('Live change');
+ });
+});
