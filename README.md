@@ -1,36 +1,93 @@
 # Workforce Intelligence
 
-An internal workforce planning application focused on retaining people through redeployment: people needing a role, teams needing people, explainable matches and reviewed internal moves. The user narrowed the product on October 2; [product scope](docs/PRODUCT_SCOPE.md) replaces the original enterprise contract. **Ready for synthetic core workflow testing.** Permanent transfers and the request-to-match-to-transfer browser journey are implemented and verified. Live tenant sign-in and deployment are not production-accepted. See [implementation matrix](IMPLEMENTATION_MATRIX.md) for observed checks and remaining work.
+I'm building Workforce Intelligence to help companies retain people when their current team's needs change.
 
-## Local setup
+It gives HR and managers a place to record people who may need a new role, describe teams' staffing needs, compare the fit, and agree an internal transfer.
 
-Node.js 22.12+ (tested host: 24.13), PostgreSQL 17+ with pgcrypto and btree_gist. Use a dedicated non-owner, non-superuser, non-BYPASSRLS runtime role. No authentication bypass exists.
+A manager or HR partner can flag someone for consideration even if that person has not started looking. The flag does not change their employment, and a match does not make a decision on anyone's behalf.
 
-1. `npm ci`
-2. `docker compose up -d db` (or an independently provisioned PostgreSQL).
-3. Copy .env.example to .env.local and configure local URLs. Shell scripts need env vars explicitly set or use `node --env-file=.env.local --import tsx scripts/migrate.ts`.
-4. Run `npm run migrate` with MIGRATION_DATABASE_URL set to the migration login; DATABASE_URL must use workforce_app.
-5. Provision an authorized tenant via `node --env-file=.env.local --import tsx scripts/bootstrap.ts` with BOOTSTRAP_TENANT_ID and BOOTSTRAP_TENANT_NAME. Follow [Entra guide](docs/ENTRA.md).
-6. Run `npm run dev -- --experimental-https` for Secure cookies with APP_URL=https://localhost:3000. Register that exact callback in Entra.
-7. Run the worker separately. It rechecks the current principal and scoped grants.
+## How it works
 
-Synthetic fixture: set ALLOW_SYNTHETIC_SEED=true and run `npm run seed`. It creates a separate explicitly synthetic tenant; it does not create a demo web session. Never set these fixture controls against a real tenant.
+1. **Flag a person for internal roles.** Record the reason, availability, location, working arrangement and any placement deadline. Skills sit on the person's profile.
+2. **Describe a team's need.** Add the role, skills, location, dates, capacity and an optional salary budget.
+3. **Review possible matches.** See where skills, timing, location and capacity line up, and where evidence is missing. Salary comparisons require separate permission; hidden pay does not affect who appears or their order.
+4. **Agree and record the move.** A proposed transfer goes through approvals before someone explicitly commits it. The move has an effective date and a history.
 
-## Verification
+This is an internal workforce planning tool. Payroll writeback, external recruitment and automated redundancy decisions are outside its scope. Some older modules remain in the source for compatibility; the [current product scope](docs/PRODUCT_SCOPE.md) describes the supported direction.
 
-Run `npm run test:ready` for route types, typecheck, lint, unit tests, isolated native PostgreSQL integration, production build and authenticated Chrome acceptance. See [test the retention workflow](docs/TESTING.md). Individual commands remain available; `npm run test:integration` requires a migrated synthetic TEST_DATABASE_URL, while `npm run test:postgres` provisions one automatically. Run the build before standalone `npm run test:e2e`.
+## Where the project stands
 
-Tests skipped for a missing database are not passes. Current evidence is in [verification](docs/VERIFICATION.md). Runtime notes and unresolved acceptance items are in [continuation](NEXT_TASK.md).
+The core workflow has synthetic unit, PostgreSQL and browser coverage. Real Microsoft Entra sign-in, live directory connections and a production deployment still need acceptance testing. I would start with a test tenant and synthetic people before considering real employee records.
 
-## Structure
+The [implementation matrix](IMPLEMENTATION_MATRIX.md) records actual checks and known gaps. The [security review](docs/SECURITY_REVIEW.md) covers the controls inspected and the concerns that remain. Neither is a claim of an independent audit or production certification.
 
-- src/lib/registry.ts: bounded domain fields shared by CRUD/forms/templates.
-- src/lib/records.ts and workflows.ts: policy checks, dates, transactions and approvals.
-- src/lib/graph: actual read-only transport, durable sync and separate group/manager paths.
-- src/lib/imports: CSV/XLSX parser, preview binding, commit and reversal.
-- src/worker.ts: PostgreSQL durable jobs, actor recheck, bounded retries.
-- migrations: append-only deployment history; never edit an applied migration.
+## Run locally
 
-The typed SQL layer is deliberately small: pg, parameterized queries, explicit domain functions and PostgreSQL constraints. There is one application and one worker; no broker, cache service or microservice layer.
+You need Node.js 22.12 or later, Docker with Compose (or PostgreSQL 17+), and a Microsoft Entra test tenant where you can register an application. There is no shared demo password or sign-in bypass.
 
-[User guide](docs/USER_GUIDE.md) · [Import guide](docs/IMPORTS.md) · [Architecture/security](docs/ARCHITECTURE.md) · [Calculation glossary](docs/CALCULATIONS.md)
+From the repository directory in PowerShell:
+
+```powershell
+npm ci
+Copy-Item .env.example .env.local
+docker compose up -d --wait db
+```
+
+### Configure sign-in
+
+In [Microsoft Entra](https://entra.microsoft.com), register a single-tenant **Web** application with this redirect URI:
+
+```text
+https://localhost:3000/api/auth/callback
+```
+
+Copy the directory tenant ID and application client ID from the registration's Overview. Create a client secret under Certificates & secrets and copy its **Value**, not its secret ID. Enter these in `.env.local`:
+
+```dotenv
+APP_URL=https://localhost:3000
+ENTRA_ALLOWED_TENANTS=your-directory-tenant-id
+ENTRA_CLIENT_ID=your-application-client-id
+ENTRA_CLIENT_SECRET=your-client-secret-value
+BOOTSTRAP_TENANT_ID=your-directory-tenant-id
+BOOTSTRAP_TENANT_NAME=Workforce test
+```
+
+The callback is derived from `APP_URL`. Keep the template's database URLs when using the included local Docker database. Those passwords are local development defaults, not deployment credentials. Keep `.env.local` private; Git ignores it.
+
+Create an enabled app role with the value `SecurityAdmin` and member type Users/Groups. Under Enterprise applications, assign that role to your test account. Then initialize the database and start the app:
+
+```powershell
+node --env-file=.env.local --import tsx scripts/migrate.ts
+node --env-file=.env.local --import tsx scripts/bootstrap.ts
+npm run dev -- --experimental-https
+```
+
+Open [https://localhost:3000/login](https://localhost:3000/login). Local HTTPS uses a development certificate; secure session cookies require HTTPS.
+
+Bootstrap gives the assigned account access to Administration. It does not grant workforce planning, identity, salary or administration rights over other domains. Initial domain-administration grants still need controlled database provisioning. The admin form also does not yet cover every transfer-specific operation; see the [security review](docs/SECURITY_REVIEW.md#remaining-concerns-before-production). `NO_ACCESS_GRANTS` means the account authenticated but has no effective application grant. More detail is in the [Entra guide](docs/ENTRA.md).
+
+When testing queued imports or directory jobs, start the worker in another terminal:
+
+```powershell
+node --env-file=.env.local --conditions=react-server --import tsx src/worker.ts
+```
+
+Graph and private Azure export storage are optional integrations. Neither is needed for the first sign-in. See the [import guide](docs/IMPORTS.md) and [deployment notes](docs/AZURE.md) before configuring them.
+
+## Check your changes
+
+```powershell
+npm run test:ready
+```
+
+This runs type generation, type checking, lint, unit tests, isolated PostgreSQL tests, a production build and Chrome browser tests. Chrome and OpenSSL must be available. The database runners create fresh synthetic databases; they do not need your Entra credentials. They also do not prove that a live Microsoft login works.
+
+For individual commands and a walkthrough of the retention workflow, see [testing](docs/TESTING.md). A skipped test is not a pass.
+
+## Under the hood
+
+One Next.js application, PostgreSQL and a durable PostgreSQL worker. TypeScript, parameterized SQL and database constraints keep the main rules close to the records they protect. There is no separate message broker or service fleet to operate.
+
+Business records are tenant scoped and dated. Identity and compensation have separate storage and permissions. Access checks run on the server; an administrator role does not automatically grant access to names or pay. Audit entries contain record identifiers and operation metadata rather than those protected values.
+
+[User guide](docs/USER_GUIDE.md) · [Architecture](docs/ARCHITECTURE.md) · [Security reporting](SECURITY.md)

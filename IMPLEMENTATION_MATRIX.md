@@ -2,6 +2,14 @@
 
 Active scope is [internal redeployment and retention](docs/PRODUCT_SCOPE.md), per the user's October 2 correction. The original enterprise contract is superseded. **Ready for synthetic core workflow testing; production acceptance remains unverified.**
 
+## October 25 publication review
+
+README and local sign-in setup rewritten; bounded streaming JSON parsing added with regression coverage; Linux unit-test exclusion quoting corrected; security dependency updates and a focused [security review](docs/SECURITY_REVIEW.md) added. No product modules were added. Initial access provisioning still requires controlled database setup: bootstrap does not confer other domain administration, and the access form/API does not yet support all planning/transfer operations.
+
+Observed failures: the October 6 GitHub run failed in its unit step because integration files were included before runtime-role creation; subsequent steps were skipped. The first local unit attempt on October 25 was blocked by sandbox EPERM renaming Vitest temporary files; 17 suites could not load and no tests ran. These are not passes.
+
+Final October 25 validation: clean `npm ci` completed. The full `npm run test:ready` completed with exit 0: route type generation, TypeScript and lint passed; unit **87 tests /18 files passed (39.04s)**; isolated PostgreSQL integration **79 tests /11 files passed (23.84s)** with migrations001-012 applied and replayed; the Next.js16.4.3 production build passed; HTTPS Chrome **5/5 passed (1.1m)**, followed by graceful database shutdown and runner success. No database tests were skipped. A fresh full `npm audit --json` after the clean install reported **zero advisories**, including development dependencies. The Azure credential module also loaded successfully with the UUID override; no live credential/token request was tested. Documentation links and `git diff --check` passed. Current source/history pattern checks found no real credentials in the reviewed candidates. Docker/Bicep builds were not run locally in this review; the new GitHub CI run must be assessed separately. No live employee data, Entra sign-in, cloud deployment, external penetration test or restore drill was used or claimed.
+
 | Active requirement | Current implementation | Remaining scope/limits |
 |---|---|---|
 | Simple workforce planning | Five primary destinations and three supporting destinations; real scoped counts; complete core browser journey | Manual user feedback; new overview/matching load not benchmarked |

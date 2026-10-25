@@ -25,7 +25,7 @@ Native tests additionally check unchanged protected values, old/new manager acce
 
 ## Testing with your own configured tenant
 
-Follow the [local setup](../README.md#local-setup) and [Entra configuration](ENTRA.md). Start with synthetic employees in a test tenant. People, teams, roles, skills, current primary assignments, dated reporting lines and confirmed movable contracts must exist. Supporting assignment, contract and organization pages remain accessible at `/workspace/assignments`, `/workspace/availability` and `/workspace/organization`.
+Follow the [local setup](../README.md#run-locally) and [Entra configuration](ENTRA.md). Start with synthetic employees in a test tenant. People, teams, roles, skills, current primary assignments, dated reporting lines and confirmed movable contracts must exist. Supporting assignment, contract and organization pages remain accessible at `/workspace/assignments`, `/workspace/availability` and `/workspace/organization`.
 
 The committer needs explicit scoped permissions for the worker, assignments, reporting lines, fulfillment, request and movement changes, plus `redeployments / FLAG_FOR_ROLES`. Each home-scoped domain also requires `TRANSFER_SCOPE` in both source and destination scopes: identities, directory accounts, external identifiers, contracts, hired-for, worker skills, compensation, reveals and redeployments. Identity domains use the identity class; compensation uses salary, and reveals use governance. `TRANSFER_SCOPE` only permits preserving values while changing scope; it grants no identity/salary read or pay editing access. Sensitive grants follow the existing independent access-approval process. Approvers need proposal/request READ and their specific scoped `APPROVE:<stage>` permission.
 

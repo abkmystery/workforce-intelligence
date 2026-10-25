@@ -12,7 +12,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src scripts tests",
-    "test": "vitest run --exclude tests/integration/** --exclude tests/e2e/**",
+    "test": "vitest run --exclude \"tests/integration/**\" --exclude \"tests/e2e/**\"",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "node --conditions=react-server --import tsx tests/e2e/run-authenticated.ts",
     "migrate": "tsx scripts/migrate.ts",
@@ -23,21 +23,24 @@
     "test:ready": "tsx scripts/test-ready.ts"
   },
   "dependencies": {
-    "@azure/identity": "^4.13.0",
+    "@azure/identity": "4.13.0",
     "@azure/storage-blob": "^12.30.0",
     "@tanstack/react-table": "^8.21.3",
     "csv-parse": "^7.0.3",
     "decimal.js": "^10.6.0",
     "exceljs": "^4.4.0",
-    "next": "^16.2.6",
+    "next": "16.4.3",
     "openid-client": "^6.8.2",
     "pg": "^8.16.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "server-only": "^0.0.1",
-    "zod": "^4.3.6"
+    "zod": "4.6.7"
   },
   "overrides": {
+    "@azure/msal-node": {
+      "uuid": "^11.1.1"
+    },
     "exceljs": {
       "uuid": "^11.1.1"
     }
@@ -56,6 +59,6 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.0",
-    "vitest": "^4.0.18"
+    "vitest": "4.1.12"
   }
 }
