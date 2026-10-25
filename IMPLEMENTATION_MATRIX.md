@@ -4,6 +4,8 @@ Active scope is [internal redeployment and retention](docs/PRODUCT_SCOPE.md), pe
 
 ## October 25 publication review
 
+README follow-up: shortened the repository front page to the product purpose, four workflows, stack and documentation links. Local setup was moved to docs/SETUP.md and its testing-guide link updated. Documentation-only change; source behavior and the executed validation evidence below are unchanged. Application checks were not rerun for this prose edit.
+
 README and local sign-in setup rewritten; bounded streaming JSON parsing added with regression coverage; Linux unit-test exclusion quoting corrected; security dependency updates and a focused [security review](docs/SECURITY_REVIEW.md) added. No product modules were added. Initial access provisioning still requires controlled database setup: bootstrap does not confer other domain administration, and the access form/API does not yet support all planning/transfer operations.
 
 Observed failures: the October 6 GitHub run failed in its unit step because integration files were included before runtime-role creation; subsequent steps were skipped. The first local unit attempt on October 25 was blocked by sandbox EPERM renaming Vitest temporary files; 17 suites could not load and no tests ran. These are not passes.
